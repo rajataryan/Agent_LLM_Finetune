@@ -1,4 +1,3 @@
-print("Hello World")
-a = 15
-b = 10
-print(a + b)
+
+import modal
+print(modal.__version__)
