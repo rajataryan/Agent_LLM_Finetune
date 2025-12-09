@@ -1,79 +1,75 @@
-from langchain_community.utilities import GoogleSerperAPIWrapper
-from langchain_core.tools import tool, Tool
-import requests
-from bs4 import BeautifulSoup
-import re
+import os
+from typing import List
+from duckduckgo_search import DDGS
+from langchain_community.document_loaders import BrowserbaseLoader
 
-serper = GoogleSerperAPIWrapper()
-
-def search_func(query: str):
-    return serper.run(query)
-
-tool_search = Tool(
-    name="search",
-    func=search_func,
-    description="Use this tool to look up anything you want in the internet"
-)
-
-@tool
-def browser_base_tool(query: str) -> str:
+def search_web(query: str) -> List[str]:
     """
-    Search the web for a query and scrape the content of the top results to build a dataset.
-    Returns a string containing the aggregated content from the search results.
-    Args:
-        query: The search topic or query to find data for.
+    Searches the web using DuckDuckGo.
     """
-    print(f"Searching for: {query}")
+    clean_query = query.strip().replace('"', '').replace("'", "")
+    print(f"🔎 SEARCHING (Backend: html): {clean_query}")
+    
+    urls = []
+    
     try:
-        # 1. Search for the query
-        search_results = serper.results(query)
-        organic_results = search_results.get("organic", [])
-        
-        gathered_data = []
-        
-        # 2. Process top 3 results
-        for result in organic_results[:3]:
-            link = result.get("link")
-            title = result.get("title")
-            snippet = result.get("snippet", "")
+        with DDGS() as ddgs:
+            # Enforce English results
+            results = list(ddgs.text(clean_query, max_results=8, backend="html", region="us-en"))
             
-            if not link:
-                continue
-                
-            print(f"Scraping: {link}")
-            try:
-                # 3. Request the page
-                response = requests.get(link, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    
-                    # 4. Extract text (simple extraction)
-                    # Remove scripts and styles
-                    for script in soup(["script", "style", "nav", "footer", "header"]):
-                        script.decompose()
-                        
-                    text = soup.get_text(separator="\n")
-                    
-                    # Clean up whitespace
-                    lines = (line.strip() for line in text.splitlines())
-                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                    text = '\n'.join(chunk for chunk in chunks if chunk)
-                    
-                    # Limit length per article
-                    text = text[:4000] 
-                    
-                    gathered_data.append(f"Source: {title} ({link})\nSnippet: {snippet}\nContent:\n{text}\n{'-'*40}")
-                else:
-                    gathered_data.append(f"Failed to fetch {link} (Status: {response.status_code})")
-            except Exception as e:
-                gathered_data.append(f"Error scraping {link}: {str(e)}")
-                
-        if not gathered_data:
-            return "No data found."
-            
-        return "\n\n".join(gathered_data)
-        
-    except Exception as e:
-        return f"Error in browser_base_tool: {str(e)}"
+            # Fallback
+            if not results:
+                 results = list(ddgs.text(clean_query, max_results=8, backend="lite", region="us-en"))
 
-browser_tools = [tool_search, browser_base_tool]
+            # Filter Bad Links
+            for r in results:
+                link = r.get('href')
+                if link and "baidu.com" not in link and "zhidao" not in link:
+                    urls.append(link)
+            
+            return urls[:5]
+            
+    except Exception as e:
+        print(f"⚠️ Search CRASHED: {e}")
+        return []
+
+def scrape_urls(urls: List[str]) -> str:
+    """
+    Visits a list of URLs one-by-one using the Browserbase Loader.
+    """
+    print(f"☁️ SCRAPING {len(urls)} SITES...")
+    
+    api_key = os.getenv("BROWSERBASE_API_KEY")
+    project_id = os.getenv("BROWSERBASE_PROJECT_ID")
+    
+    if not api_key or not project_id:
+        print("❌ Error: Keys missing in .env")
+        return ""
+
+    combined_content = ""
+    
+    # --- FIX: Loop through URLs one by one ---
+    for url in urls:
+        print(f"   Reading: {url}...")
+        try:
+            # Initialize Loader for just THIS url
+            loader = BrowserbaseLoader(
+                urls=[url], # List of 1
+                text_content=True,
+                api_key=api_key,
+                project_id=project_id,
+            )
+            
+            # Load with a tighter timeout handling (implicit in try/except)
+            docs = loader.load()
+            
+            if docs:
+                doc = docs[0] # We only asked for 1
+                print(f"   ✅ Success!")
+                combined_content += f"\n\n--- SOURCE: {url} ---\n{doc.page_content}"
+            
+        except Exception as e:
+            # If one fails (Timeout), we catch it and keep going!
+            print(f"   ❌ Failed to read {url}: {e}")
+            
+    return combined_content

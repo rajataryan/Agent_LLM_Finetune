@@ -1,9 +1,10 @@
+# 1. IMPORT THE .ENV file
 import os
 from dotenv import load_dotenv 
 
 # 2. LOAD THE ENV FILE IMMEDIATELY
 # This must happen BEFORE you initialize the ChatGoogleGenerativeAI model
-load_dotenv() 
+load_dotenv(override=True) 
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
@@ -77,7 +78,7 @@ if __name__ == "__main__":
     
     # Mock data to simulate a user
     mock_state = {
-        "messages": [HumanMessage(content="Make a bot that teaches me python in Hindi")]
+        "messages": [HumanMessage(content="Fine Tune a LLM that only responds with questions?")]
     }
     
     output = intake_agent(mock_state)

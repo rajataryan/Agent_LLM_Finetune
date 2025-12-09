@@ -24,7 +24,8 @@ class ProjectConfiguration(BaseModel):
         description="A short message to the user confirming you understood. e.g., 'Bet. I'm setting up a Llama-3 model to learn Gen Z slang.'"
     )
     language: str = Field(
-        description="The primary language the bot should speak. Infer it from the user's prompt (e.g., if they write in Hindi, set this to 'Hindi'). Default to 'English"
+        description="The primary language the bot should speak. Infer it from the user's prompt (e.g., if they write in Hindi, set this to 'Hindi').",
+        default="English"
     )
 
 # You can add a validation tool here if needed

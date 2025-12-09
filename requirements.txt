@@ -1,18 +1,15 @@
-# --- Core Frameworks ---
-langgraph
+# Core Framework
 langchain
 langchain-community
-langchain-openai          # Keep this if you still want GPT-4o as an option
-langchain-google-genai    # <--- ADDED: This enables Gemini Pro/Flash
-pydantic
+langchain-core
+langchain-openai
+langchain-google-genai
+langgraph
 
-# --- The Cloud Tools ---
-modal
-browserbase
-mcp
-
-# --- UI & Utilities ---
-gradio
+# Tools & APIs
 python-dotenv
-pandas
-httpx
+duckduckgo-search==5.3.1
+browserbase
+
+# Utilities
+pydantic
