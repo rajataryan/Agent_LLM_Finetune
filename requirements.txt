@@ -4,12 +4,14 @@ langchain-community
 langchain-core
 langchain-openai
 langchain-google-genai
+langchain-ollama
 langgraph
 
 # Tools & APIs
 python-dotenv
 duckduckgo-search==5.3.1
 browserbase
+beautifulsoup4
 
 # Utilities
-pydantic
+pydanticgradio

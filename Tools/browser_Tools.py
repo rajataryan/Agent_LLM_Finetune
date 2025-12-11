@@ -17,16 +17,15 @@ def search_web(query: str) -> List[str]:
             # Enforce English results
             results = list(ddgs.text(clean_query, max_results=8, backend="html", region="us-en"))
             
-            # Fallback
             if not results:
                  results = list(ddgs.text(clean_query, max_results=8, backend="lite", region="us-en"))
 
-            # Filter Bad Links
             for r in results:
                 link = r.get('href')
-                if link and "baidu.com" not in link and "zhidao" not in link:
+                if link and "baidu.com" not in link:
                     urls.append(link)
             
+            # Limit to top 5
             return urls[:5]
             
     except Exception as e:
@@ -35,41 +34,37 @@ def search_web(query: str) -> List[str]:
 
 def scrape_urls(urls: List[str]) -> str:
     """
-    Visits a list of URLs one-by-one using the Browserbase Loader.
+    Visits a list of URLs one-by-one using Browserbase Loader.
     """
-    print(f"☁️ SCRAPING {len(urls)} SITES...")
+    print(f"☁️ SCRAPING {len(urls)} SITES (BROWSERBASE)...")
     
     api_key = os.getenv("BROWSERBASE_API_KEY")
     project_id = os.getenv("BROWSERBASE_PROJECT_ID")
     
     if not api_key or not project_id:
-        print("❌ Error: Keys missing in .env")
+        print("❌ Error: Missing BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID in .env")
         return ""
 
     combined_content = ""
     
-    # --- FIX: Loop through URLs one by one ---
     for url in urls:
         print(f"   Reading: {url}...")
         try:
-            # Initialize Loader for just THIS url
+            # We load one by one so if one fails, the others still work
             loader = BrowserbaseLoader(
-                urls=[url], # List of 1
+                urls=[url],
                 text_content=True,
                 api_key=api_key,
                 project_id=project_id,
             )
             
-            # Load with a tighter timeout handling (implicit in try/except)
             docs = loader.load()
-            
             if docs:
-                doc = docs[0] # We only asked for 1
+                doc = docs[0]
                 print(f"   ✅ Success!")
                 combined_content += f"\n\n--- SOURCE: {url} ---\n{doc.page_content}"
             
         except Exception as e:
-            # If one fails (Timeout), we catch it and keep going!
-            print(f"   ❌ Failed to read {url}: {e}")
+            print(f"   ❌ Scrape failed for {url}: {e}")
             
     return combined_content

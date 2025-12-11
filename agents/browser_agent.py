@@ -1,14 +1,16 @@
 import os
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage
 from state import AgentState
-from Tools.browser_tools import search_web, scrape_urls 
+# Import tool functionality only
+from tools.browser_tools import search_web, scrape_urls 
 from dotenv import load_dotenv 
 
 load_dotenv(override=True)
 
-llm = ChatOpenAI(model="gpt-4o", temperature=0)
+# We use Llama 3.2 (Small) here because generating a search query is easy and we want speed
+llm = ChatOllama(model="llama3.2", temperature=0)
 
 BROWSER_SYSTEM_PROMPT = """
 You are a Research Agent. Your job is to find raw text data.
@@ -17,7 +19,7 @@ Style: {style}
 """
 
 def browser_node(state: AgentState):
-    print("--- 🌐 BROWSER AGENT STARTED ---")
+    print("--- 🌐 BROWSER AGENT STARTED (LOCAL) ---")
     
     topic = state.get("data_topic", "General")
     style = state.get("data_style", "Normal")
@@ -33,22 +35,23 @@ def browser_node(state: AgentState):
             ("human", "Generate 1 specific search query for: {topic}. Return ONLY the query string.")
         ])
         msg = search_prompt.format_messages(topic=topic, style=style)
-        query = llm.invoke(msg).content
         
+        # Cleanup response just in case Llama adds quotes
+        query = llm.invoke(msg).content.strip().replace('"', '')
+        
+        # Call the Tool
         urls = search_web(query)
         
-        # --- FALLBACK MECHANISM ---
+        # Fallback Logic
         if not urls:
             print("   ⚠️ Search blocked. Using FAST FALLBACK URLs.")
             if "slang" in topic.lower():
-                # Wiki is much faster than Dictionary.com
                 urls = [
                     "https://simple.wikipedia.org/wiki/Slang", 
                     "https://en.wikipedia.org/wiki/Internet_slang"
                 ]
             else:
                 urls = ["https://en.wikipedia.org/wiki/Python_(programming_language)"]
-        # ---------------------------
         
         return {
             "site_list": urls,
@@ -59,6 +62,7 @@ def browser_node(state: AgentState):
     elif existing_sites and not existing_content:
         print(f"   Status: Scraping {len(existing_sites)} sites.")
         
+        # Call the Tool
         raw_content = scrape_urls(existing_sites)
         
         return {
@@ -67,25 +71,5 @@ def browser_node(state: AgentState):
             "messages": [AIMessage(content="I have read the material. Generating dataset...")]
         }
 
-    # --- CHECKPOINT 3: DONE ---
     else:
         return {"status": "processing_data"}
-
-# --- TEST BLOCK ---
-if __name__ == "__main__":
-    mock_state = {
-        "data_topic": "Gen Z Slang",
-        "data_style": "Informal",
-        "site_list": [], 
-        "dataset_content": ""
-    }
-    
-    print("\n--- RUN 1 (SEARCH) ---")
-    result1 = browser_node(mock_state)
-    print(result1)
-    
-    print("\n--- RUN 2 (SCRAPE) ---")
-    mock_state["site_list"] = result1["site_list"]
-    result2 = browser_node(mock_state)
-    # Don't print the whole content, it's too big
-    print(f"FINAL CONTENT LENGTH: {len(result2.get('dataset_content', ''))} characters")

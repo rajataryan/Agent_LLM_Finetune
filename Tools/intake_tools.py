@@ -20,9 +20,11 @@ class ProjectConfiguration(BaseModel):
     data_style: str = Field(
         description="The tone/style of the response. e.g., 'professional', 'pirate', 'gen-z'"
     )
-    confirmation_message: str = Field(
-        description="A short message to the user confirming you understood. e.g., 'Bet. I'm setting up a Llama-3 model to learn Gen Z slang.'"
+    dataset_size: int = Field(
+        description="The number of samples/DataPoints to generate for the dataset.",
+        default=500
     )
+    
     language: str = Field(
         description="The primary language the bot should speak. Infer it from the user's prompt (e.g., if they write in Hindi, set this to 'Hindi').",
         default="English"

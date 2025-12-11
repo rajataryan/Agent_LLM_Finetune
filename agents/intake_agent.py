@@ -1,85 +1,60 @@
-# 1. IMPORT THE .ENV file
-import os
-from dotenv import load_dotenv 
-
-# 2. LOAD THE ENV FILE IMMEDIATELY
-# This must happen BEFORE you initialize the ChatGoogleGenerativeAI model
-load_dotenv(override=True) 
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate 
-from langchain_core.messages import SystemMessage, HumanMessage 
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage
 from state import AgentState
-from Tools.intake_tools import ProjectConfiguration 
+from dotenv import load_dotenv
+# Import the configuration schema from your tools
+from tools.intake_tools import ProjectConfiguration 
 
+load_dotenv(override=True)
 
-#-----Model Setup-----
-# Now this will work because the API Key is loaded into the environment
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-structured_llm = llm.with_structured_output(ProjectConfiguration)
+# We use Llama 3.1 (8B) here because it follows strict JSON schemas better than the small 3.2 model
+llm = ChatOllama(model="llama3.1:8b", temperature=0)
 
-#-----Prompt Setup-----
 INTAKE_SYSTEM_PROMPT = """
-You are an expert AI Solutions Architect. 
-Your job is to listen to the user's request for a custom Fine-Tuned LLM 
-and translate it into a technical configuration.
-
-Analyze the user's request and fill out the configuration schema.
-- Default to 'unsloth/llama-3-8b-bnb-4bit' if no model is specified.
-- Infer the 'data_topic', 'data_style', and 'language' from context.
+You are an AI Architect Intake Agent.
+Your job is to analyze a user's request and structure it into a project configuration.
+If the user mentions a specific number of examples, set 'dataset_size' to that number. Otherwise default to 500.
+If the user writes in a specific language (e.g., Hindi, Spanish), detect it and set the 'language' field.
 """
 
-# <----DEFINE THE TEMPLATE------
-# You cannot use 'prompt_template' inside the function if you don't define it first!
-prompt_template = ChatPromptTemplate.from_messages([
-    ("system", INTAKE_SYSTEM_PROMPT),
-    ("human", "{user_input}")
-])
-
-#-----Worker Node-----
-def intake_agent(state: AgentState):
-    """
-    This function is the 'Worker' that LangGraph calls.
-    It reads the State, does the work, and updates the State.
-    """
-    print("--- 🧠 INTAKE AGENT STARTED ---") # Added print so you can see it running
-
-    # A. Get the last message from the user [-1] defines the last message
-    last_user_message = state["messages"][-1].content
-
-    # B. Format the prompt
-    # Now this works because prompt_template is defined above
-    formatted_prompt = prompt_template.format(user_input=last_user_message)
-
-    # C. Call the LLM
-    # invoke() expects the string/messages directly, not a dict {"messages": ...}
-    result = structured_llm.invoke(formatted_prompt)
-
-    # D. Update the Folder
-    print(f"--- ✅ PLAN GENERATED: {result.project_name} ---")
+def intake_node(state: AgentState):
+    print("--- 🧠 INTAKE AGENT STARTED (LOCAL) ---")
     
-    # From The Project Configuration tool
+    # 1. Get User Input (Robust handling)
+    messages = state.get("messages", [])
+    if messages:
+        user_input = messages[-1].content
+    else:
+        print("   ⚠️ No chat history found. Using 'user_goal' from state.")
+        user_input = state.get("user_goal", "General LLM Fine-Tuning")
+
+    print(f"   Analysing request: {user_input[:50]}...")
+
+    # 2. Configure LLM for Structured Output
+    # Llama 3.1 supports tool-calling features natively in LangChain
+    structured_llm = llm.with_structured_output(ProjectConfiguration)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", INTAKE_SYSTEM_PROMPT),
+        ("human", "{input}")
+    ])
+    
+    # 3. Execute
+    chain = prompt | structured_llm
+    config = chain.invoke({"input": user_input})
+    
+    print(f"   ✅ Configuration Generated: {config.project_name}")
+    print(f"      Topic: {config.data_topic} | Size: {config.dataset_size} | Lang: {config.language}")
+
+    # 4. Update State
     return {
-        "project_name": result.project_name,
-        "base_model": result.base_model,
-        # "user_goal": result.user_goal, # Can Add this Field in the Project Configuration tool
-        "data_topic": result.data_topic,
-        "data_style": result.data_style,
-        "language": result.language,
+        "project_name": config.project_name,
+        "base_model": config.base_model,
+        "data_topic": config.data_topic,
+        "data_style": config.data_style,
+        "dataset_size": config.dataset_size,
+        "language": config.language,
         "status": "gathering_data",
-        "messages": [result.confirmation_message]
+        "messages": [AIMessage(content=f"Project '{config.project_name}' initialized. I will find {config.dataset_size} examples regarding '{config.data_topic}'.")]
     }
-
-# --- OPTIONAL: TEST BLOCK ---
-# If we want to run 'python -m agents.intake_agent' directly
-if __name__ == "__main__":
-    from langchain_core.messages import HumanMessage
-    
-    # Mock data to simulate a user
-    mock_state = {
-        "messages": [HumanMessage(content="Fine Tune a LLM that only responds with questions?")]
-    }
-    
-    output = intake_agent(mock_state)
-    print("\nFINAL OUTPUT:", output)

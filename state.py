@@ -1,32 +1,36 @@
 # state.py
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import TypedDict, List, Annotated, Optional
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from typing import Annotated
 
 class AgentState(TypedDict):
-    # NODE 1
-    # Chat History
+    # NODE 1: Intake
     messages: Annotated[List[BaseMessage], add_messages]
     
-    # The Blueprints (Set by Intake Agent)
-    project_name: str           # e.g., "genz-slang-bot"
-    base_model: str             # e.g., "unsloth/llama-3-8b-bnb-4bit"
-    user_goal: str              # e.g., "Make the LLM talk like a Gen Z teenager"
+    # Project Config
+    project_name: str
+    base_model: str
+    user_goal: str
     
-    # Data Requirements (For Browser Agent)
-    data_topic: str             # e.g., "slang_conversation"
-    data_style: str             # e.g., "informal, gen-z, sarcastic"
-
-    # Language Model Parameters
-    language : str              # e.g., "English"
+    # Data Requirements
+    data_topic: str
+    data_style: str
+    dataset_size: int
+    language: str
     
-    # Status Flags
-    status: str                 # "intake", "gathering_data", "training", "done"
-    error: Optional[str]        #If something breaks, we write the error here so the 'debugger' node can see it.
-
-    # NODE 2
-    # Stores Raw URLs found by the search tool
+    # NODE 2: Browser
     site_list: List[str]
-    dataset_content: str # Stores the massive string of scraped text
+    dataset_content: str
+    
+    # NODE 3: Data Logic
+    training_file_path: str 
+    generated_count: int  # <--- Tracks how much training data we have so far
 
+    # NODE 4: Training
+    job_id: str           # Modal Job ID (for tracking)
+    training_status: str  # e.g., "submitted", "success", "failed"
+    model_url: str        # The final Hugging Face link
+    
+    # Status Tracking
+    status: str
+    error: Optional[str]
