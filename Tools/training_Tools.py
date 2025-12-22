@@ -1,130 +1,135 @@
 import os
 import modal
+import time
 
-# 1. Define the Cloud Environment
+# Enable output for debugging
+modal.enable_output()
+
+# Use timestamp for truly unique app names
+app_name = f"love-factory-{int(time.time())}"
+app = modal.App(app_name)
+
+# IMAGE DEFINITION
 image = (
-    modal.Image.debian_slim()
-    .apt_install("git") 
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("git", "wget")
     .pip_install(
-        "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
-        "torch",
-        "torchvision", 
         "transformers",
         "datasets",
-        "huggingface_hub",
         "trl",
+        "peft",
         "accelerate",
-        "peft"
+        "bitsandbytes",
+        "huggingface-hub",
     )
-    .env({"HUGGINGFACE_TOKEN": os.environ.get("HUGGINGFACE_TOKEN", "")})
+    .pip_install("unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git")
+    .pip_install("torchvision")
 )
 
-# 2. Define the App
-app = modal.App("fine-tune-agent")
-
-# 3. The GPU Function
 @app.function(
     image=image,
-    gpu="A10G",        
-    timeout=3600,      
-    secrets=[modal.Secret.from_name("huggingface")] 
+    gpu="A10G",
+    timeout=60 * 60,
+    secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-def train_model_on_modal(data_content: str, config: dict):
+def train_love_bot(dataset_bytes: bytes, project_name: str):
     import os
-    import torch
     from unsloth import FastLanguageModel
-    from datasets import Dataset
     from trl import SFTTrainer
     from transformers import TrainingArguments
+    from datasets import load_dataset
+    from huggingface_hub import HfApi
 
-    print(f"🚀 CLOUD START: Training '{config.get('project_name')}'...")
+    print(f"🚀 CLOUD TRAINING STARTED: {project_name}")
     
-    # A. Write Data
-    with open("train.jsonl", "w") as f:
-        f.write(data_content)
-        
-    # B. Load Model
-    max_seq_length = 2048
+    # Write dataset
+    data_path = "/tmp/dataset.jsonl"
+    with open(data_path, "wb") as f:
+        f.write(dataset_bytes)
+    print(f"✅ Dataset written: {len(dataset_bytes)} bytes")
+
+    # Load model
+    print("📦 Loading Llama 3.1 8B (4-bit)...")
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = config.get("base_model", "unsloth/llama-3-8b-bnb-4bit"),
-        max_seq_length = max_seq_length,
-        dtype = None,
-        load_in_4bit = True,
+        model_name="unsloth/Meta-Llama-3.1-8B-bnb-4bit",
+        max_seq_length=2048,
+        dtype=None,
+        load_in_4bit=True,
     )
 
-    # C. Format Data
-    dataset = Dataset.from_json("train.jsonl")
-    def formatting_prompts_func(examples):
-        instructions = examples["instruction"]
-        outputs      = examples["output"]
-        texts = []
-        for instruction, output in zip(instructions, outputs):
-            text = f"""Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-### Instruction:
-{instruction}
-
-### Response:
-{output}<|end_of_text|>"""
-            texts.append(text)
-        return { "text" : texts, }
-    dataset = dataset.map(formatting_prompts_func, batched = True,)
-
-    # D. Setup LoRA
+    # Apply LoRA
+    print("🔧 Applying LoRA...")
     model = FastLanguageModel.get_peft_model(
         model,
-        r = 16,
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
-                          "gate_proj", "up_proj", "down_proj",],
-        lora_alpha = 16,
-        lora_dropout = 0,
-        bias = "none",
-        use_gradient_checkpointing = "unsloth",
-        random_state = 3407,
-        use_rslora = False,
-        loftq_config = None,
+        r=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+        use_rslora=False,
+        loftq_config=None,
     )
 
-    # E. Train
-    print("⚡ STARTING TRAINING RUN...")
+    # Load dataset
+    print("📊 Loading training data...")
+    dataset = load_dataset("json", data_files=data_path, split="train")
+    print(f"✅ Loaded {len(dataset)} examples")
+
+    # --- THE FIX IS HERE ---
+    def formatting_prompts_func(examples):
+        instructions = examples["instruction"]
+        outputs = examples["output"]
+        texts = []
+        for i, o in zip(instructions, outputs):
+            text = f"<|start_header_id|>user<|end_header_id|>\n\n{i}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{o}<|eot_id|>"
+            texts.append(text)
+        return texts # <--- RETURN LIST, NOT DICT
+    # -----------------------
+
+    # Train
+    print("🏋️ Training...")
     trainer = SFTTrainer(
-        model = model,
-        tokenizer = tokenizer,
-        train_dataset = dataset,
-        dataset_text_field = "text",
-        max_seq_length = max_seq_length,
-        dataset_num_proc = 2,
-        packing = False,
-        args = TrainingArguments(
-            per_device_train_batch_size = 2,
-            gradient_accumulation_steps = 4,
-            warmup_steps = 5,
-            max_steps = 60, 
-            learning_rate = 2e-4,
-            fp16 = not torch.cuda.is_bf16_supported(),
-            bf16 = torch.cuda.is_bf16_supported(),
-            logging_steps = 1,
-            optim = "adamw_8bit",
-            weight_decay = 0.01,
-            lr_scheduler_type = "linear",
-            seed = 3407,
-            output_dir = "outputs",
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=dataset,
+        dataset_text_field="text",
+        max_seq_length=2048,
+        dataset_num_proc=2,
+        packing=False,
+        formatting_func=formatting_prompts_func,
+        args=TrainingArguments(
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            warmup_steps=5,
+            max_steps=60,
+            learning_rate=2e-4,
+            fp16=False, 
+            bf16=True, 
+            logging_steps=1,
+            optim="adamw_8bit",
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            seed=3407,
+            output_dir="/tmp/outputs",
+            report_to="none",
         ),
     )
+    
     trainer.train()
+    print("✅ Training complete!")
+
+    # Push to Hub
+    print("📤 Uploading to HuggingFace...")
+    token = os.environ["HUGGINGFACE_TOKEN"]
+    api = HfApi()
+    user = api.whoami(token=token)["name"]
+    repo_id = f"{user}/{project_name}"
     
-    # F. Save & Push
-    print("💾 SAVING MODEL TO HUGGING FACE...")
-    new_model_name = f"{config['project_name']}-lora"
-    username = "Pineco04"  
-    repo_id = f"{username}/{new_model_name}"
-    hf_token = os.environ["HUGGINGFACE_TOKEN"]
+    model.push_to_hub_merged(repo_id, tokenizer, save_method="lora", token=token)
     
-    # --- THE FIX: Pass 'repo_id' (full address) instead of 'new_model_name' ---
-    model.push_to_hub_merged(repo_id, tokenizer, save_method = "lora", token = hf_token)
-    model.push_to_hub(repo_id, token = hf_token)
-    
-    final_url = f"https://huggingface.co/{repo_id}"
-    print(f"✅ DONE! Model live at: {final_url}")
-    
-    return final_url
+    url = f"https://huggingface.co/{repo_id}"
+    print(f"🎉 SUCCESS! {url}")
+    return url

@@ -34,3 +34,6 @@ class AgentState(TypedDict):
     # Status Tracking
     status: str
     error: Optional[str]
+
+    # finalizer Agent
+    final_response: str

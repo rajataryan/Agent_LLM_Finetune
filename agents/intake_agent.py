@@ -41,8 +41,8 @@ def intake_node(state: AgentState):
     ])
     
     # 3. Execute
-    chain = prompt | structured_llm
-    config = chain.invoke({"input": user_input})
+    chain = prompt | structured_llm # the output of the prompt becomes the input of the structured LLM.
+    config = chain.invoke({"input": user_input}) # the output of the chain is the final configuration.
     
     print(f"   ✅ Configuration Generated: {config.project_name}")
     print(f"      Topic: {config.data_topic} | Size: {config.dataset_size} | Lang: {config.language}")

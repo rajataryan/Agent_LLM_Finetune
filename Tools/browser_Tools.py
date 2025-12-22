@@ -25,7 +25,7 @@ def search_web(query: str) -> List[str]:
                 if link and "baidu.com" not in link:
                     urls.append(link)
             
-            # Limit to top 5
+            # Limit set to top 5
             return urls[:5]
             
     except Exception as e:

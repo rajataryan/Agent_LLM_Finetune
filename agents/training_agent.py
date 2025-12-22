@@ -1,56 +1,64 @@
-import modal
 import os
-from langchain_core.messages import AIMessage
+import modal
 from state import AgentState
-from tools.training_tools import train_model_on_modal, app 
+# Import the tools that we just proved are working
+from tools.training_tools import train_love_bot, app
+
+# Enable output so we can see logs in the Streamlit terminal
+modal.enable_output()
 
 def training_node(state: AgentState):
+    """Dispatches training job to Modal's serverless GPU."""
+    print("\n" + "="*60)
     print("--- 🚀 TRAINING AGENT STARTED ---")
+    print("="*60)
+    
+    dataset_file = state.get("training_file_path")
+    project_name = state.get("project_name", "love-bot")
+    
+    # Sanitize project name for Hugging Face (lowercase, no spaces)
+    safe_project_name = project_name.strip().replace(" ", "-").replace("_", "-").lower()
     
     # 1. Validation
-    file_path = state.get("training_file_path")
-    if not file_path or not os.path.exists(file_path):
-        return {
-            "error": "Training file not found on local disk!", 
-            "status": "failed",
-            "messages": [AIMessage(content="Error: No training data found to send to the cloud.")]
-        }
-    
-    # 2. Prepare Config
-    with open(file_path, "r") as f:
-        file_content = f.read()
+    if not dataset_file:
+        print("   ❌ ERROR: No dataset file path provided")
+        return {"training_status": "failed", "error": "No dataset file found"}
         
-    config = {
-        "base_model": state.get("base_model", "unsloth/llama-3-8b-bnb-4bit"),
-        "project_name": state.get("project_name", "my-finetune")
-    }
+    if not os.path.exists(dataset_file):
+        print(f"   ❌ ERROR: File not found: {dataset_file}")
+        return {"training_status": "failed", "error": f"File not found: {dataset_file}"}
 
-    # 3. Trigger Modal
-    print(f"   ⚡ Dispatching job to Modal (A10G GPU)...")
-    print(f"   📂 Dataset size: {len(file_content)} bytes")
-    print(f"   ⏳ If this is the first run, it may take 3-5 mins to build the image. Please wait...")
+    # 2. Read Data
+    print(f"   📂 Reading: {dataset_file}")
+    try:
+        with open(dataset_file, "rb") as f:
+            dataset_bytes = f.read()
+        print(f"   ✅ Loaded: {len(dataset_bytes)} bytes")
+    except Exception as e:
+        return {"training_status": "failed", "error": f"Read error: {e}"}
+        
+    # 3. Dispatch to Cloud
+    print(f"   🚀 Dispatching to Modal: '{safe_project_name}'")
+    print("   ⏳ This will take 3-5 minutes (GPU warm-up + training)...")
     
     try:
-        # --- FIX: enable_output() MUST be the outer layer ---
-        with modal.enable_output():
-            with app.run():
-                hf_url = train_model_on_modal.remote(file_content, config)
+        # We use the context manager because this is how we ran the successful test
+        with app.run():
+            model_url = train_love_bot.remote(
+                dataset_bytes=dataset_bytes, 
+                project_name=safe_project_name
+            )
             
-        print(f"   ✅ TRAINING COMPLETE!")
-        print(f"   🔗 Model available at: {hf_url}")
+        print(f"   ✅ SUCCESS! Model: {model_url}")
+        print("="*60 + "\n")
         
         return {
-            "training_status": "success",
-            "model_url": hf_url,
-            "status": "completed",
-            "messages": [AIMessage(content=f"Training finished successfully! Your model is live at: {hf_url}")]
+            "training_status": "success", 
+            "model_url": model_url,
+            "messages": [f"✅ Training complete! Model: {model_url}"]
         }
         
     except Exception as e:
-        print(f"   ❌ Training failed: {e}")
-        return {
-            "training_status": "failed",
-            "error": str(e),
-            "status": "failed",
-            "messages": [AIMessage(content=f"Training failed. Error: {str(e)}")]
-        }
+        print(f"   ❌ FAILED: {e}")
+        print("="*60 + "\n")
+        return {"training_status": "failed", "error": str(e)}
