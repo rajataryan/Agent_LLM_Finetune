@@ -8,7 +8,7 @@ from agents.intake_agent import intake_node
 from agents.browser_agent import browser_node
 from agents.data_agent import data_node
 from agents.training_agent import training_node
-from agents.finalizer_agent import finalizer_node # <--- NEW
+from agents.finalizer_agent import finalizer_node 
 
 load_dotenv(override=True)
 
