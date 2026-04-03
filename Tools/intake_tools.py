@@ -4,29 +4,27 @@ from typing import Optional
 
 class ProjectConfiguration(BaseModel):
     """
-    The structured output we force the Intake Agent to generate.
-    This acts as the 'Contract' between the User and the Backend.
+    Defines the structure for a fine-tuning project.
     """
     project_name: str = Field(
-        description="A short, slugified name for the project (no spaces). e.g., 'finance-bot-v1'"
+        description="A short, slugified name for the project (e.g., 'math-tutor-v1')."
     )
     base_model: str = Field(
-        description="The huggingface model ID to use. Default to 'unsloth/llama-3-8b-bnb-4bit' unless requested otherwise.",
+        description="The base model ID.",
         default="unsloth/llama-3-8b-bnb-4bit"
     )
     data_topic: str = Field(
-        description="The specific subject matter for the dataset. e.g., 'medical_diagnosis' or 'casual_slang'"
+        description="The specific subject matter or persona (e.g., 'Physics', 'Customer Support')."
     )
     data_style: str = Field(
-        description="The tone/style of the response. e.g., 'professional', 'pirate', 'gen-z'"
+        description="The tone/style of the response (e.g., 'Formal', 'Sarcastic', 'Concise')."
     )
     dataset_size: int = Field(
-        description="The number of samples/DataPoints to generate for the dataset.",
-        default=500
+        description="The EXACT number of samples requested by the user.",
+        default=100  # Neutral default (was 500)
     )
-    
     language: str = Field(
-        description="The primary language the bot should speak. Infer it from the user's prompt (e.g., if they write in Hindi, set this to 'Hindi').",
+        description="The primary language for the dataset.",
         default="English"
     )
 

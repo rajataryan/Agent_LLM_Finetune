@@ -3,29 +3,53 @@ from typing import List
 from duckduckgo_search import DDGS
 from langchain_community.document_loaders import BrowserbaseLoader
 
+# --- DOMAIN FILTERING ---
+# These sites are "noise" for character/persona research. 
+# We explicitly ban them from search results.
+BLACKLIST_DOMAINS = [
+    "support.google.com", "mail.google.com", "accounts.google.com",
+    "microsoft.com", "support.apple.com", 
+    "facebook.com", "twitter.com", "instagram.com", "linkedin.com",
+    "play.google.com", "apps.apple.com"
+]
+
 def search_web(query: str) -> List[str]:
     """
-    Searches the web using DuckDuckGo.
+    Searches the web using DuckDuckGo, automatically filtering out support/help pages.
     """
+    # 1. Clean the query
     clean_query = query.strip().replace('"', '').replace("'", "")
-    print(f"🔎 SEARCHING (Backend: html): {clean_query}")
+    
+    # 2. Construct "Negative Constraints"
+    # This adds " -site:support.google.com -site:microsoft.com ..." to the query
+    exclusions = " ".join([f"-site:{d}" for d in BLACKLIST_DOMAINS])
+    final_query = f"{clean_query} {exclusions}"
+
+    print(f"🔎 SEARCHING (Smart Filter): {clean_query}")
     
     urls = []
     
     try:
         with DDGS() as ddgs:
-            # Enforce English results
-            results = list(ddgs.text(clean_query, max_results=8, backend="html", region="us-en"))
+            # We explicitly ask for "html" backend as per your config, 
+            # but we request a few extra results (10) because we might filter some out manually.
+            results = list(ddgs.text(final_query, max_results=10, backend="html", region="us-en"))
             
+            # Fallback if html backend fails
             if not results:
-                 results = list(ddgs.text(clean_query, max_results=8, backend="lite", region="us-en"))
+                 print("   ⚠️ HTML backend empty, trying 'lite' backend...")
+                 results = list(ddgs.text(final_query, max_results=10, backend="lite", region="us-en"))
 
             for r in results:
                 link = r.get('href')
+                
+                # Double-check: Sometimes search engines ignore the "-site:" operator.
+                # We manually skip if a blacklisted domain sneaked in.
                 if link and "baidu.com" not in link:
-                    urls.append(link)
+                    if not any(blocked in link for blocked in BLACKLIST_DOMAINS):
+                        urls.append(link)
             
-            # Limit set to top 5
+            # Limit set to top 5 CLEAN results
             return urls[:5]
             
     except Exception as e:
@@ -48,7 +72,7 @@ def scrape_urls(urls: List[str]) -> str:
     combined_content = ""
     
     for url in urls:
-        print(f"   Reading: {url}...")
+        print(f"   Reading: {url[:60]}...") # Truncate long URLs in logs
         try:
             # We load one by one so if one fails, the others still work
             loader = BrowserbaseLoader(
@@ -62,7 +86,8 @@ def scrape_urls(urls: List[str]) -> str:
             if docs:
                 doc = docs[0]
                 print(f"   ✅ Success!")
-                combined_content += f"\n\n--- SOURCE: {url} ---\n{doc.page_content}"
+                # Add a separator so the LLM knows where one site ends and another begins
+                combined_content += f"\n\n--- SOURCE: {url} ---\n{doc.page_content[:4000]}" # Limit chars per site
             
         except Exception as e:
             print(f"   ❌ Scrape failed for {url}: {e}")

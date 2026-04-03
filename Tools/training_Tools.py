@@ -1,13 +1,12 @@
 import os
 import modal
-import time
 
 # Enable output for debugging
 modal.enable_output()
 
-# Use timestamp for truly unique app names
-app_name = f"love-factory-{int(time.time())}"
-app = modal.App(app_name)
+# 1. FIXED: Use a static app name. 
+# Do not use time.time() here, it causes issues with connection state.
+app = modal.App("finetune-factory")
 
 # IMAGE DEFINITION
 image = (
@@ -29,10 +28,10 @@ image = (
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=60 * 60,
+    timeout=60 * 60, # 1 hour max server timeout
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-def train_love_bot(dataset_bytes: bytes, project_name: str):
+def train_generic_model(dataset_bytes: bytes, project_name: str):
     import os
     from unsloth import FastLanguageModel
     from trl import SFTTrainer
@@ -78,7 +77,6 @@ def train_love_bot(dataset_bytes: bytes, project_name: str):
     dataset = load_dataset("json", data_files=data_path, split="train")
     print(f"✅ Loaded {len(dataset)} examples")
 
-    # --- THE FIX IS HERE ---
     def formatting_prompts_func(examples):
         instructions = examples["instruction"]
         outputs = examples["output"]
@@ -86,8 +84,7 @@ def train_love_bot(dataset_bytes: bytes, project_name: str):
         for i, o in zip(instructions, outputs):
             text = f"<|start_header_id|>user<|end_header_id|>\n\n{i}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{o}<|eot_id|>"
             texts.append(text)
-        return texts # <--- RETURN LIST, NOT DICT
-    # -----------------------
+        return texts 
 
     # Train
     print("🏋️ Training...")

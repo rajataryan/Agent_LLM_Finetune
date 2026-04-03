@@ -1,27 +1,32 @@
 import modal
 from modal import Secret
 
-# --- FIX: Create a new App instance ---
-# We cannot use .lookup() here because we are defining a new function.
+# Enable output so we can see the image build process!
+modal.enable_output()
+
+# --- Create a new App instance ---
 app = modal.App("inference-agent") 
 
 # Define the Inference Image (Lightweight)
+# 1. FIXED: Added Python 3.10 explicitly and apt_install for git/wget
 inference_image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("git", "wget")  # <--- CRITICAL FIX: Git is required for the Unsloth install below
     .pip_install(
-        "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
         "torch",
         "transformers",
         "huggingface_hub",
         "accelerate",
         "peft"
     )
+    .pip_install("unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git")
 )
 
 @app.function(
     image=inference_image,
     gpu="A10G",
-    secrets=[Secret.from_name("huggingface")]
+    # Ensure this matches the secret name used in training_tools.py
+    secrets=[Secret.from_name("huggingface-secret")] 
 )
 def run_inference_on_cloud(prompt: str, model_id: str):
     """
@@ -42,17 +47,15 @@ def run_inference_on_cloud(prompt: str, model_id: str):
     
     FastLanguageModel.for_inference(model)
     
-    # 2. Format Prompt (Alpaca Style)
-    alpaca_prompt = f"""Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    # 2. Format Prompt (Llama 3 Style)
+    llama_style_prompt = f"""<|start_header_id|>user<|end_header_id|>
 
-### Instruction:
-{prompt}
+{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-### Response:
 """
     
     # 3. Generate
-    inputs = tokenizer([alpaca_prompt], return_tensors="pt").to("cuda")
+    inputs = tokenizer([llama_style_prompt], return_tensors="pt").to("cuda")
     
     outputs = model.generate(
         **inputs, 
@@ -64,14 +67,18 @@ def run_inference_on_cloud(prompt: str, model_id: str):
     # 4. Decode
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
     
-    # Clean up the output
-    response_clean = response.split("### Response:")[-1].strip()
+    # Clean up the output to return ONLY the assistant's part
+    if "assistant" in response:
+        response_clean = response.split("assistant")[-1].strip()
+    else:
+        response_clean = response
+        
     return response_clean
 
 # --- MCP COMPATIBLE TOOL DEFINITION ---
 def query_finetuned_model_tool(prompt: str, model_url: str):
     """
-    MCP Tool: specific tool to query the sofa bot.
+    MCP Tool: specific tool to query the fine-tuned bot.
     """
     # Extract Repo ID from URL
     if "huggingface.co/" in model_url:
@@ -82,7 +89,6 @@ def query_finetuned_model_tool(prompt: str, model_url: str):
     print(f"   🌩️ Calling Cloud Inference for: {repo_id}")
     
     # Run remotely on Modal
-    # This will spin up the 'inference-agent' app temporarily to run the function
     with app.run():
         answer = run_inference_on_cloud.remote(prompt, repo_id)
         
