@@ -7,10 +7,18 @@ modal.enable_output()
 # --- Create a new App instance ---
 app = modal.App("inference-agent") 
 
-# --- CRITICAL FIX: Match the Training Image Exactly ---
+# --- CRITICAL FIX: Force CUDA 12.1 GPU Installations & Remove Rogue Dependencies ---
 inference_image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("git", "wget")
+    # 1. Force pip to grab the GPU versions, NOT the CPU versions
+    .pip_install(
+        "torch", 
+        "torchvision", 
+        "torchaudio", 
+        index_url="https://download.pytorch.org/whl/cu121"
+    )
+    # 2. Install the Hugging Face stack
     .pip_install(
         "transformers",
         "datasets",
@@ -18,10 +26,12 @@ inference_image = (
         "peft",
         "accelerate",
         "bitsandbytes",
-        "huggingface-hub",
-        "torchvision"
+        "huggingface-hub"
     )
+    # 3. Install Unsloth
     .pip_install("unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git")
+    # 4. Strip out the incompatible torchao library so it stops crashing!
+    .run_commands("pip uninstall -y torchao")
 )
 
 @app.function(
@@ -32,43 +42,43 @@ inference_image = (
 )
 def run_inference_on_cloud(prompt: str, model_id: str):
     """
-    Downloads the base model, attaches the fine-tuned LoRA adapter, and generates a response.
+    Logs in globally, then lets Unsloth download the base model and adapter automatically.
     """
     import os
+    from huggingface_hub import login
     import torch
     from unsloth import FastLanguageModel
     
-    # Grab the token directly from Modal's secure environment
+    # --- 1. GLOBAL VIP PASS ---
     hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        print("🔑 Logging into Hugging Face globally...")
+        login(token=hf_token)
+    else:
+        print("⚠️ WARNING: HF_TOKEN not found!")
     
-    print(f"⚡ LOADING BASE MODEL...")
+    print(f"⚡ LOADING FULL MODEL: {model_id}...")
     
-    # 1. Load Base Model First (Llama 3.1 8B)
-    # FORCE-FEED THE TOKEN DIRECTLY HERE
+    # --- 2. ONE-STEP MAGIC ---
+    # Because we are logged in, Unsloth can see the private repo, 
+    # find the base model automatically, and merge your adapter!
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name="unsloth/Meta-Llama-3.1-8B-bnb-4bit", 
+        model_name=model_id, 
         max_seq_length=2048,
         dtype=None,
         load_in_4bit=True,
-        token=hf_token,  # <--- BULLETPROOF AUTHENTICATION
     )
-    
-    # 1.5 Attach your custom LoRA personality
-    print(f"🔗 Attaching custom LoRA adapter: {model_id}")
-    
-    # FORCE-FEED THE TOKEN DIRECTLY HERE TOO
-    model.load_adapter(model_id, token=hf_token) # <--- BULLETPROOF AUTHENTICATION
     
     FastLanguageModel.for_inference(model)
     
-    # 2. Format Prompt (Llama 3 Style)
+    # 3. Format Prompt (Llama 3 Style)
     llama_style_prompt = f"""<|start_header_id|>user<|end_header_id|>
 
 {prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 """
     
-    # 3. Generate
+    # 4. Generate
     inputs = tokenizer([llama_style_prompt], return_tensors="pt").to("cuda")
     
     outputs = model.generate(
@@ -78,7 +88,7 @@ def run_inference_on_cloud(prompt: str, model_id: str):
         temperature=0.3, 
     )
     
-    # 4. Decode
+    # 5. Decode
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
     
     # Clean up the output to return ONLY the assistant's part
