@@ -7,19 +7,21 @@ modal.enable_output()
 # --- Create a new App instance ---
 app = modal.App("inference-agent") 
 
-# Define the Inference Image (Lightweight)
-# 1. FIXED: Added Python 3.10 explicitly and apt_install for git/wget
+# --- CRITICAL FIX: Match the Training Image Exactly ---
 inference_image = (
     modal.Image.debian_slim(python_version="3.10")
-    .apt_install("git", "wget")  # <--- CRITICAL FIX: Git is required for the Unsloth install below
+    .apt_install("git", "wget")
     .pip_install(
-        "torch",
         "transformers",
-        "huggingface_hub",
+        "datasets",
+        "trl",
+        "peft",
         "accelerate",
-        "peft"
+        "bitsandbytes",
+        "huggingface-hub",
     )
     .pip_install("unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git")
+    .pip_install("torchvision")
 )
 
 @app.function(
@@ -30,20 +32,34 @@ inference_image = (
 )
 def run_inference_on_cloud(prompt: str, model_id: str):
     """
-    Downloads the fine-tuned model and generates a response.
+    Downloads the base model, attaches the fine-tuned LoRA adapter, and generates a response.
     """
+    import os
+    from huggingface_hub import login
     import torch
     from unsloth import FastLanguageModel
     
-    print(f"⚡ LOADING MODEL: {model_id}...")
+    # --- NEW: Log into Hugging Face to access private models! ---
+    hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        print("🔑 Logging into Hugging Face...")
+        login(token=hf_token)
+    else:
+        print("⚠️ WARNING: HF_TOKEN not found in Modal environment!")
     
-    # 1. Load Model + Adapter
+    print(f"⚡ LOADING BASE MODEL...")
+    
+    # 1. Load Base Model First (Llama 3.1 8B)
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_id,
+        model_name="unsloth/Meta-Llama-3.1-8B-bnb-4bit", 
         max_seq_length=2048,
         dtype=None,
         load_in_4bit=True,
     )
+    
+    # 1.5 Attach your custom LoRA personality
+    print(f"🔗 Attaching custom LoRA adapter: {model_id}")
+    model.load_adapter(model_id)
     
     FastLanguageModel.for_inference(model)
     
